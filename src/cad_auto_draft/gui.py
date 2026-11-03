@@ -379,6 +379,17 @@ class App:
 
 
 def launch_gui() -> None:
+    # The frozen exe is built with console=True so the command line
+    # still works. When the GUI opens, hide that black console window
+    # on Windows so the user only sees the GUI, not a console behind it.
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 0)
+        except Exception:
+            pass
     root = tk.Tk()
     App(root)
     root.mainloop()
