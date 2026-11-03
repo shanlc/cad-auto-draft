@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cad-auto-draft"
+version = "0.1.0"
+description = "AI-assisted draft generator for plumbing, rainwater and fire systems (DXF output for AutoCAD / Tianzheng review)"
+requires-python = ">=3.10"
+dependencies = ["ezdxf>=1.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
