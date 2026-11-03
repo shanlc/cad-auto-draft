@@ -21,6 +21,16 @@ from .validate import validate
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows Actions runners (and many English Windows installs) use
+    # cp1252 for stdout, which cannot encode Chinese. Without this,
+    # the first Chinese print ("报告: ...") raises UnicodeEncodeError
+    # and the exe exits with code 1 -- exactly the smoke-test failure
+    # seen in GitHub Actions. Force UTF-8 output, never crash on print.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     parser = argparse.ArgumentParser(description="给排水 + 消防 AI 粗稿生成器")
     parser.add_argument("--input", help="建筑输入 JSON（与 --plan 二选一，或用于覆盖底图解析结果）")
     parser.add_argument("--plan", help="建筑底图 DXF 文件（块 / 外部参照会被展开解析）")
