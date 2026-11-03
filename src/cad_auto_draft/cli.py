@@ -13,9 +13,9 @@ from pathlib import Path
 
 from .ai_client import ai_params, apply_params, rule_params
 from .dwg import write_dxf
+from .dwg_convert import load_plan_with_xrefs
 from .layout import build_layout
 from .models import Building
-from .plan_parser import parse_plan
 from .report import write_report
 from .validate import validate
 
@@ -61,12 +61,16 @@ def main(argv: list[str] | None = None) -> int:
             pass
     parser = argparse.ArgumentParser(description="给排水 + 消防 AI 粗稿生成器")
     parser.add_argument("--input", help="建筑输入 JSON（与 --plan 二选一，或用于覆盖底图解析结果）")
-    parser.add_argument("--plan", help="建筑底图 DXF 文件（块 / 外部参照会被展开解析）")
+    parser.add_argument("--plan", help="建筑底图 DWG 或 DXF 文件（DWG 会自动转 DXF；块 / 外部参照会被展开解析）")
     parser.add_argument("--plan-units", default="mm", choices=["mm", "m", "auto"],
                         help="底图单位，默认 mm（院图多为毫米）")
     parser.add_argument("--plan-out", help="把底图解析结果另存为 JSON，供人工检查")
     parser.add_argument("--xref", action="append", default=[],
-                        help="外部参照文件映射，可重复：块名=DXF路径")
+                        help="外部参照文件映射，可重复：块名=DWG/DXF路径")
+    parser.add_argument("--xref-dir", action="append", default=[],
+                        help="自动搜索外部参照 / 建筑底图的文件夹，可重复（默认还会搜主图所在文件夹）")
+    parser.add_argument("--base-plan", help="指定的建筑底图文件（DWG/DXF），主图参照不到它时作兜底，或主图无房间时并入")
+    parser.add_argument("--bind-out", help="把主图 + 参照绑定展开成一个 DXF 文件（可单独在 CAD 里打开检查）")
     parser.add_argument("--out", default="output", help="输出目录")
     parser.add_argument("--ai", action="store_true", help="调用 AI API 做参数建议")
     parser.add_argument("--gui", action="store_true", help="打开图形界面")
@@ -85,15 +89,45 @@ def main(argv: list[str] | None = None) -> int:
             if "=" in item:
                 name, path = item.split("=", 1)
                 xref_files[name.strip()] = path.strip()
-        parsed = parse_plan(args.plan, units=args.plan_units, xref_files=xref_files)
+        # Base-plan as a mapping: --base-plan 块名=文件, else a plain file.
+        base_plan = args.base_plan
+        if base_plan and "=" in base_plan and not Path(base_plan).is_file():
+            name, path = base_plan.split("=", 1)
+            xref_files[name.strip()] = path.strip()
+            base_plan = None
+        loaded = load_plan_with_xrefs(
+            args.plan, units=args.plan_units, xref_files=xref_files,
+            xref_dirs=args.xref_dir, base_plan=base_plan,
+            work_dir=Path(args.out) / "_converted",
+            bind_out=args.bind_out)
+        parsed = loaded["parsed"]
         raw.update(parsed)
         if args.plan_out:
             Path(args.plan_out).write_text(
                 json.dumps(parsed, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"底图解析: {args.plan_out}")
-        if parsed.get("missing_xrefs"):
-            print(f"警告：缺失外部参照（未展开）：{parsed['missing_xrefs']}")
-        for warning in parsed.get("warnings", []):
+        for converted in loaded["converted"]:
+            print(f"已转换: {converted}")
+        for name, path in loaded["xref_files"].items():
+            print(f"参照已展开: {name} -> {path}")
+        if loaded["missing"]:
+            print(f"警告：缺失外部参照（未展开）：{loaded['missing']}")
+        if loaded["bind_path"]:
+            print(f"绑定底图: {loaded['bind_path']} {loaded['bind_stats']}")
+        for warning in loaded["warnings"]:
+            print(f"底图提示：{warning}")
+    if args.input and args.base_plan and not args.plan:
+        # JSON 参数 + 单独的建筑底图：先并入底图的房间/洁具，再让 JSON 覆盖参数。
+        base_loaded = load_plan_with_xrefs(
+            args.base_plan, units=args.plan_units,
+            xref_dirs=args.xref_dir,
+            work_dir=Path(args.out) / "_converted",
+            bind_out=args.bind_out)
+        base_parsed = base_loaded["parsed"]
+        for key in ("rooms", "fixtures", "obstacles", "exits", "width", "depth"):
+            if base_parsed.get(key):
+                raw[key] = base_parsed[key]
+        for warning in base_loaded["warnings"]:
             print(f"底图提示：{warning}")
     if args.input:
         raw.update(json.loads(Path(args.input).read_text(encoding="utf-8")))

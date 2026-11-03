@@ -34,7 +34,7 @@ except Exception as exc:  # pragma: no cover - tkinter missing on some builds
 
 from .ai_client import ai_params, rule_params
 from .cli import run_build
-from .plan_parser import parse_plan
+from .dwg_convert import load_plan_with_xrefs
 
 # Built-in example, identical to examples/hotel_floor.json, embedded so
 # the frozen exe works even though examples/ is not bundled with it.
@@ -92,8 +92,8 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("给排水 + 消防 AI 自动粗稿")
-        self.root.geometry("960x780")
-        self.root.minsize(860, 640)
+        self.root.geometry("960x880")
+        self.root.minsize(860, 700)
         self.root.configure(bg=BG)
         self.queue: queue.Queue = queue.Queue()
         self.result: dict | None = None
@@ -138,7 +138,7 @@ class App:
         card1.pack(fill="x", pady=(0, 10))
         for value, label in (("example", "内置示例：酒店标准层（不用准备文件，直接点生成就能试）"),
                              ("json", "建筑输入 JSON 文件"),
-                             ("dxf", "建筑底图 DXF 文件（自动识别块 / 外部参照）")):
+                             ("dxf", "建筑底图 DWG / DXF 文件（DWG 自动转 DXF，自动识别块 / 外部参照）")):
             ttk.Radiobutton(card1, text=label, variable=self.mode, value=value,
                             command=self._update_mode).pack(anchor="w", pady=2)
 
@@ -153,7 +153,7 @@ class App:
 
         row = ttk.Frame(card1)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text="DXF 文件：").pack(side="left")
+        ttk.Label(row, text="底图文件：").pack(side="left")
         self.dxf_var = tk.StringVar()
         self.dxf_entry = ttk.Entry(row, textvariable=self.dxf_var, width=62)
         self.dxf_entry.pack(side="left", fill="x", expand=True, padx=4)
@@ -164,6 +164,29 @@ class App:
         self.units_combo = ttk.Combobox(row, textvariable=self.units_var,
                                         values=["mm", "m", "auto"], width=7, state="readonly")
         self.units_combo.pack(side="left")
+
+        # --- Base plan / xref card ---
+        card_x = ttk.Labelframe(main, text="建筑底图 / 外部参照（主图里是参照、或底图单独一个文件时用）")
+        card_x.pack(fill="x", pady=(0, 10))
+        row = ttk.Frame(card_x)
+        row.pack(fill="x", pady=4)
+        ttk.Label(row, text="参照文件夹：").pack(side="left")
+        self.xref_dir_var = tk.StringVar()
+        ttk.Entry(row, textvariable=self.xref_dir_var, width=62).pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(row, text="浏览…", command=self._browse_xref_dir).pack(side="left")
+        ttk.Label(card_x, text="留空 = 自动搜主图所在文件夹及其子文件夹；DWG 参照也会自动转成 DXF 再展开。",
+                  foreground=MUTED).pack(anchor="w")
+        row = ttk.Frame(card_x)
+        row.pack(fill="x", pady=4)
+        ttk.Label(row, text="指定底图：").pack(side="left")
+        self.base_plan_var = tk.StringVar()
+        ttk.Entry(row, textvariable=self.base_plan_var, width=62).pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(row, text="浏览…", command=self._browse_base_plan).pack(side="left")
+        ttk.Label(card_x, text="可选：主图参照不到底图、或底图单独一个 DWG/DXF 时，在这里指定它，程序会把它并入解析。",
+                  foreground=MUTED).pack(anchor="w")
+        self.bind_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(card_x, text="同时生成绑定后的底图 DXF（把参照都展开成一个文件，放在输出文件夹 base_bound.dxf）",
+                        variable=self.bind_var).pack(anchor="w", pady=2)
 
         # --- Step 2: optional overrides ---
         card2 = ttk.Labelframe(main, text="②  参数（留空 = 按输入文件，不覆盖）")
@@ -254,10 +277,21 @@ class App:
             self.json_var.set(path)
 
     def _browse_dxf(self) -> None:
-        path = filedialog.askopenfilename(title="选择建筑底图 DXF",
-                                          filetypes=[("DXF", "*.dxf"), ("全部文件", "*.*")])
+        path = filedialog.askopenfilename(title="选择建筑底图 DWG / DXF",
+                                          filetypes=[("CAD 图纸", "*.dwg;*.dxf"), ("DWG", "*.dwg"), ("DXF", "*.dxf"), ("全部文件", "*.*")])
         if path:
             self.dxf_var.set(path)
+
+    def _browse_xref_dir(self) -> None:
+        path = filedialog.askdirectory(title="选择外部参照 / 建筑底图文件夹")
+        if path:
+            self.xref_dir_var.set(path)
+
+    def _browse_base_plan(self) -> None:
+        path = filedialog.askopenfilename(title="选择指定的建筑底图 DWG / DXF",
+                                          filetypes=[("CAD 图纸", "*.dwg;*.dxf"), ("DWG", "*.dwg"), ("DXF", "*.dxf"), ("全部文件", "*.*")])
+        if path:
+            self.base_plan_var.set(path)
 
     def _browse_out(self) -> None:
         path = filedialog.askdirectory(title="选择输出文件夹")
@@ -267,13 +301,20 @@ class App:
     def _show_help(self) -> None:
         messagebox.showinfo(
             "使用说明",
-            "1. 选输入：内置示例可直接试；有自己的图就选 JSON 或 DXF。\n"
-            "2. 参数留空就是按输入文件来，想改再选。\n"
-            "3. 点“生成粗稿”，等日志里出现自检结果。\n"
-            "4. 点“打开输出文件夹”，把 draft.dxf 拿到 AutoCAD / 天正里打开复核，\n"
+            "1. 选输入：内置示例可直接试；有自己的图就选 JSON 或 DWG/DXF。\n"
+            "   DWG 不用先手动转：程序会先用 ODA / LibreDWG / AutoCAD 自动转成 DXF。\n"
+            "   如果本机没有这些工具，日志会告诉你要装免费的 ODA File Converter。\n"
+            "2. 建筑底图是参照时：程序会自动搜主图所在文件夹及其子文件夹，\n"
+            "   找到参照的 DWG/DXF 就自动转、自动展开；找不到时在下面指定底图，\n"
+            "   或在“参照文件夹”里指定底图所在的文件夹。\n"
+            "3. 勾选“生成绑定后的底图 DXF”，可以把参照都展开成一个文件，\n"
+            "   单独在 CAD 里打开检查底图本身有没有绑对。\n"
+            "4. 参数留空就是按输入文件来，想改再选。\n"
+            "5. 点“生成粗稿”，等日志里出现自检结果。\n"
+            "6. 点“打开输出文件夹”，把 draft.dxf 拿到 AutoCAD / 天正里打开复核，\n"
             "   再转成天正专用管线和正式标注出图。\n"
-            "5. DXF 不能直接读 DWG：先在 AutoCAD / 天正用 DXFOUT 转成 DXF。\n"
-            "注意：输出是粗稿，不是正式施工图，须经注册工程师复核签字。")
+            "注意：输出是粗稿，不是正式施工图，须经注册工程师复核签字。\n"
+            "天正自定义对象只能在天正里转 DXF：ODA 看到的是代理对象，可能不完整。")
 
     def _log(self, text: str, tag: str = "info") -> None:
         self.log.insert("end", text + "\n", tag)
@@ -288,23 +329,43 @@ class App:
             _open_path(self.result["report"])
 
     # -- run ----------------------------------------------------------
-    def _collect_raw(self) -> dict:
+    def _load_plan(self, plan_path: str, out_dir: str) -> dict:
+        """Load a DWG/DXF plan with xref auto-discovery, logging via queue."""
+        xref_dirs = [self.xref_dir_var.get().strip()] if self.xref_dir_var.get().strip() else []
+        base_plan = self.base_plan_var.get().strip() or None
+        bind_out = str(Path(out_dir) / "base_bound.dxf") if self.bind_var.get() else None
+        loaded = load_plan_with_xrefs(
+            plan_path, units=self.units_var.get(), xref_dirs=xref_dirs,
+            base_plan=base_plan, work_dir=str(Path(out_dir) / "_converted"),
+            bind_out=bind_out)
+        for converted in loaded["converted"]:
+            self.queue.put(("log", f"已转换：{converted}", "info"))
+        for name, path in loaded["xref_files"].items():
+            self.queue.put(("log", f"参照已展开：{name} -> {path}", "info"))
+        if loaded["missing"]:
+            self.queue.put(("log", f"警告：缺失外部参照（未展开）：{loaded['missing']}", "warn"))
+        if loaded["bind_path"]:
+            self.queue.put(("log", f"绑定底图：{loaded['bind_path']} {loaded['bind_stats']}", "info"))
+        for warning in loaded["warnings"]:
+            self.queue.put(("log", f"底图提示：{warning}", "warn"))
+        return loaded["parsed"]
+
+    def _collect_raw(self, out_dir: str = "output") -> dict:
         mode = self.mode.get()
         if mode == "json":
             path = self.json_var.get().strip()
             if not path:
                 raise ValueError("请先选择一个 JSON 输入文件，或改选内置示例。")
-            raw = json.loads(Path(path).read_text(encoding="utf-8"))
+            raw: dict = {}
+            if self.base_plan_var.get().strip():
+                base_parsed = self._load_plan(self.base_plan_var.get().strip(), out_dir)
+                raw.update(base_parsed)
+            raw.update(json.loads(Path(path).read_text(encoding="utf-8")))
         elif mode == "dxf":
             path = self.dxf_var.get().strip()
             if not path:
-                raise ValueError("请先选择一个 DXF 底图文件，或改选内置示例。")
-            parsed = parse_plan(path, units=self.units_var.get())
-            raw = dict(parsed)
-            if parsed.get("missing_xrefs"):
-                self.queue.put(("log", f"警告：缺失外部参照（未展开）：{parsed['missing_xrefs']}", "warn"))
-            for warning in parsed.get("warnings", []):
-                self.queue.put(("log", f"底图提示：{warning}", "warn"))
+                raise ValueError("请先选择一个 DWG / DXF 底图文件，或改选内置示例。")
+            raw = dict(self._load_plan(path, out_dir))
         else:
             raw = deepcopy(EXAMPLE_BUILDING)
         # Optional overrides, only when the user actually filled them in.
@@ -331,9 +392,10 @@ class App:
 
         def worker() -> None:
             try:
-                raw = self._collect_raw()
+                out_dir = self.out_var.get().strip() or "output"
+                raw = self._collect_raw(out_dir)
                 params = ai_params(raw) if self.ai_var.get() else rule_params()
-                result = run_build(raw, self.out_var.get().strip() or "output", params)
+                result = run_build(raw, out_dir, params)
                 self.queue.put(("done", result, None))
             except Exception:
                 self.queue.put(("error", None, traceback.format_exc()))

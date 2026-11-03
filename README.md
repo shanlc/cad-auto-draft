@@ -44,7 +44,10 @@ DXF 粗稿 + 自检报告 + 统计 JSON ──► AutoCAD / 天正打开复核�
 全部流程：
 
 1. 选输入：内置酒店标准层示例（不用准备文件，直接试）、
-   建筑输入 JSON、或建筑底图 DXF（自动识别块 / 外部参照）
+   建筑输入 JSON、或建筑底图 DWG / DXF（DWG 自动转 DXF，
+   自动识别块 / 外部参照；主图里是参照时，在“建筑底图 /
+   外部参照”里指定参照文件夹或直接指定底图文件，还能勾选
+   生成绑定后的底图 DXF 单独检查）
 2. 参数留空就是按输入文件来，想改建筑类型、喷淋 / 灭火器
    危险级、层数、降雨强度再选
 3. 选输出文件夹，点“生成粗稿”，日志里会显示统计和自检结果，
@@ -72,8 +75,14 @@ DXF 粗稿 + 自检报告 + 统计 JSON ──► AutoCAD / 天正打开复核�
 
 ```bat
 cad-auto-draft.exe --input examples/hotel_floor.json --out output
-cad-auto-draft.exe --plan 建筑底图.dxf --plan-out 解析结果.json --out output
+cad-auto-draft.exe --plan 建筑底图.dwg --plan-out 解析结果.json --out output
+cad-auto-draft.exe --plan 给排水.dwg --xref-dir D:\项目\底图 --base-plan 建筑底图.dwg --bind-out 绑定底图.dxf --out output
 ```
+
+DWG 转换工具顺序见 `docs/dwg_conversion.md`：ODA File Converter
+（免费，推荐）→ LibreDWG → 已装 AutoCAD 的电脑（先 `-XREF Bind`
+绑定参照再 `DXFOUT`）。本机没有转换工具时程序会明确报错并给出
+安装指引，不会静默失败；天正自定义对象只能走 AutoCAD + 天正那条路。
 
 打了 `v*` 标签时，exe 还会挂到 GitHub Release 附件里。
 本地打包 Windows exe 的方法：见 `cad-auto-draft.spec`，
