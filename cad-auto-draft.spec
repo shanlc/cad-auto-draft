@@ -3,9 +3,12 @@
 #   pip install pyinstaller
 #   pyinstaller cad-auto-draft.spec
 # Or let GitHub Actions do it: .github/workflows/build-exe.yml
-# The exe is a console program; it does NOT need AutoCAD installed to
-# generate a DXF draft, but AutoCAD / Tianzheng is still needed to
-# open, review and finalise the drawing.
+# The exe is a windowed GUI program when double-clicked (no arguments);
+# with arguments it still works as a console program. It does NOT need
+# AutoCAD installed to generate a DXF draft, but AutoCAD / Tianzheng
+# is still needed to open, review and finalise the drawing.
+# Note: tkinter is imported lazily in main.py, so list it explicitly
+# here or PyInstaller may miss it in the frozen exe.
 block_cipher = None
 
 a = Analysis(
@@ -13,7 +16,8 @@ a = Analysis(
     pathex=["src"],
     binaries=[],
     datas=[],
-    hiddenimports=["cad_auto_draft"],
+    hiddenimports=["cad_auto_draft", "cad_auto_draft.gui", "tkinter",
+                   "tkinter.ttk", "tkinter.filedialog", "tkinter.messagebox"],
     hookspath=[],
     runtime_hooks=[],
     excludes=[],

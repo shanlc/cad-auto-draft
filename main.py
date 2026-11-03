@@ -17,7 +17,18 @@ for _stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from cad_auto_draft.cli import main
+
+def should_launch_gui(argv: list[str]) -> bool:
+    """Double-clicking the exe (no arguments) opens the GUI instead of
+    printing a command-line error and exiting, which is what users saw
+    before. --gui does the same explicitly."""
+    return not argv or "--gui" in argv
+
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if should_launch_gui(sys.argv[1:]):
+        from cad_auto_draft.gui import launch_gui
+        launch_gui()
+    else:
+        from cad_auto_draft.cli import main
+        raise SystemExit(main())

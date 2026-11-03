@@ -20,6 +20,34 @@ from .report import write_report
 from .validate import validate
 
 
+def run_build(raw: dict, out_dir: str | Path, params: dict | None = None) -> dict:
+    """Shared build used by both the CLI and the GUI.
+
+    Returns the building, layout, checks and output paths. Raises on
+    bad input so the GUI can show the error instead of crashing.
+    """
+    params = params or rule_params()
+    building = Building.from_dict(apply_params(raw, params))
+    layout = build_layout(building)
+    checks = validate(building, layout)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    dxf = write_dxf(building, layout, str(out / "draft.dxf"))
+    report = write_report(building, layout, checks, params.get("source", "rule"),
+                          str(out / "report.md"))
+    summary_path = out / "summary.json"
+    summary_path.write_text(
+        json.dumps({"summary": layout.summary, "checks": checks,
+                    "ai_params_source": params.get("source", "rule")},
+                   ensure_ascii=False, indent=2), encoding="utf-8")
+    failed = [c for c in checks if c["level"] == "FAIL"]
+    return {
+        "building": building, "layout": layout, "checks": checks,
+        "dxf": dxf, "report": str(report), "summary": str(summary_path),
+        "failed": bool(failed),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows Actions runners (and many English Windows installs) use
     # cp1252 for stdout, which cannot encode Chinese. Without this,
@@ -41,7 +69,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="外部参照文件映射，可重复：块名=DXF路径")
     parser.add_argument("--out", default="output", help="输出目录")
     parser.add_argument("--ai", action="store_true", help="调用 AI API 做参数建议")
+    parser.add_argument("--gui", action="store_true", help="打开图形界面")
     args = parser.parse_args(argv)
+    if args.gui:
+        from .gui import launch_gui
+        launch_gui()
+        return 0
     if not args.input and not args.plan:
         parser.error("必须提供 --input 或 --plan 其中之一")
 
@@ -65,28 +98,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.input:
         raw.update(json.loads(Path(args.input).read_text(encoding="utf-8")))
     params = ai_params(raw) if args.ai else rule_params()
-    building = Building.from_dict(apply_params(raw, params))
-
-    layout = build_layout(building)
-    checks = validate(building, layout)
-
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    dxf = write_dxf(building, layout, str(out / "draft.dxf"))
-    report = write_report(building, layout, checks, params.get("source", "rule"),
-                          str(out / "report.md"))
-    (out / "summary.json").write_text(
-        json.dumps({"summary": layout.summary, "checks": checks,
-                    "ai_params_source": params.get("source", "rule")},
-                   ensure_ascii=False, indent=2), encoding="utf-8")
-
-    failed = [c for c in checks if c["level"] == "FAIL"]
-    print(f"DXF: {dxf}")
-    print(f"报告: {report}")
+    result = run_build(raw, args.out, params)
+    layout = result["layout"]
+    checks = result["checks"]
+    print(f"DXF: {result['dxf']}")
+    print(f"报告: {result['report']}")
     print(f"统计: {layout.summary['counts']}")
     for c in checks:
         print(f"[{c['level']}] {c['system']}: {c['message']}")
-    if failed:
+    if result["failed"]:
         print("注意：有 FAIL 项，须人工处理后再使用本粗稿。")
         return 2
     return 0
