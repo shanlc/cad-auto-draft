@@ -42,11 +42,9 @@ DXF 粗稿 + 自检报告 + 统计 JSON ──► AutoCAD / 天正打开复核�
 每次推送到 main 分支，GitHub Actions 都会在 Windows 上自动
 打包出 `cad-auto-draft.exe`。
 
-注意：GitHub App 没有 workflow 写入权限，不能直接推送
-`.github/workflows/build-exe.yml`，所以这个文件需要你在
-GitHub 网页上手动新建一次（路径就是
-`.github/workflows/build-exe.yml`，内容见本地同名文件），
-建好之后，每次推送都会自动打包：
+工作流文件在 `.github/workflows/build-exe.yml`（因 GitHub App
+没有 workflow 写入权限，该文件是经 GitHub 网页手动建立的，
+后续代码推送不会覆盖它），每次推送都会自动打包：
 
 1. 打开仓库的 Actions 页面，找到最新一次成功的
    `Build Windows exe` 运行
