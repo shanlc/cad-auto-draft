@@ -15,18 +15,45 @@ from .ai_client import ai_params, apply_params, rule_params
 from .dwg import write_dxf
 from .layout import build_layout
 from .models import Building
+from .plan_parser import parse_plan
 from .report import write_report
 from .validate import validate
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="给排水 + 消防 AI 粗稿生成器")
-    parser.add_argument("--input", required=True, help="建筑输入 JSON")
+    parser.add_argument("--input", help="建筑输入 JSON（与 --plan 二选一，或用于覆盖底图解析结果）")
+    parser.add_argument("--plan", help="建筑底图 DXF 文件（块 / 外部参照会被展开解析）")
+    parser.add_argument("--plan-units", default="mm", choices=["mm", "m", "auto"],
+                        help="底图单位，默认 mm（院图多为毫米）")
+    parser.add_argument("--plan-out", help="把底图解析结果另存为 JSON，供人工检查")
+    parser.add_argument("--xref", action="append", default=[],
+                        help="外部参照文件映射，可重复：块名=DXF路径")
     parser.add_argument("--out", default="output", help="输出目录")
     parser.add_argument("--ai", action="store_true", help="调用 AI API 做参数建议")
     args = parser.parse_args(argv)
+    if not args.input and not args.plan:
+        parser.error("必须提供 --input 或 --plan 其中之一")
 
-    raw = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    raw: dict = {}
+    if args.plan:
+        xref_files = {}
+        for item in args.xref:
+            if "=" in item:
+                name, path = item.split("=", 1)
+                xref_files[name.strip()] = path.strip()
+        parsed = parse_plan(args.plan, units=args.plan_units, xref_files=xref_files)
+        raw.update(parsed)
+        if args.plan_out:
+            Path(args.plan_out).write_text(
+                json.dumps(parsed, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"底图解析: {args.plan_out}")
+        if parsed.get("missing_xrefs"):
+            print(f"警告：缺失外部参照（未展开）：{parsed['missing_xrefs']}")
+        for warning in parsed.get("warnings", []):
+            print(f"底图提示：{warning}")
+    if args.input:
+        raw.update(json.loads(Path(args.input).read_text(encoding="utf-8")))
     params = ai_params(raw) if args.ai else rule_params()
     building = Building.from_dict(apply_params(raw, params))
 

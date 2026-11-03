@@ -37,7 +37,48 @@ DXF 粗稿 + 自检报告 + 统计 JSON ──► AutoCAD / 天正打开复核�
 包括 GB 50015、GB 50016、GB 50974、GB 50084、GB 50140、GB 50014。
 参数均为保守的粗稿默认值，正式设计必须按现行规范与计算书复核。
 
-## 快速开始
+## Windows exe（不用装 Python）
+
+每次推送到 main 分支，GitHub Actions 都会在 Windows 上自动
+打包出 `cad-auto-draft.exe`：
+
+1. 打开仓库的 Actions 页面，找到最新一次成功的
+   `Build Windows exe` 运行
+2. 下载 Artifacts 里的 `cad-auto-draft-windows`
+3. 在 Windows 命令行里直接运行，不用装 Python，也不用装 AutoCAD
+   就能出粗稿（AutoCAD / 天正只在复核、转正式图时才需要）：
+
+```bat
+cad-auto-draft.exe --input examples/hotel_floor.json --out output
+cad-auto-draft.exe --plan 建筑底图.dxf --plan-out 解析结果.json --out output
+```
+
+打了 `v*` 标签时，exe 还会挂到 GitHub Release 附件里。
+本地打包 Windows exe 的方法：见 `cad-auto-draft.spec`，
+在 Windows 上 `pip install pyinstaller` 后运行
+`pyinstaller cad-auto-draft.spec`。
+
+## 建筑底图识图（块 / 外部参照）
+
+不用手写 JSON 了，先把底图转成 DXF，再直接解析：
+
+```bash
+.venv/bin/python -m cad_auto_draft.cli \
+  --plan 建筑底图.dxf --plan-units mm \
+  --plan-out 解析结果.json --out output
+# 外部参照缺文件时显式指定，可重复：
+#   --xref 参照块名=参照文件.dxf
+```
+
+- DWG 不能直接读：先在 AutoCAD / 天正用 DXFOUT，
+  或用 ODA File Converter 转成 DXF（程序遇到 DWG 会直接报错并提示）
+- 块会递归展开（含嵌套块），块名含马桶 / 洗脸盆等关键词的
+  识别为洁具，管井 / 楼梯 / 电梯 / 柱识别为障碍物
+- 外部参照找不到文件时，不会静默丢掉，会在输出里列出
+  `missing_xrefs`，必须补齐参照再正式使用
+- 详细复核方法、常见漏认原因见 `docs/plan_recognition.md`
+
+## 快速开始（源码）
 
 ```bash
 python3 -m venv .venv
@@ -84,8 +125,8 @@ AI 只返回立管位置、危险级、复核建议等参数，程序会校验�
 
 见 `examples/hotel_floor.json`：建筑尺寸、层数、房间、
 障碍物（管井 / 楼梯间）、洁具点位、出口、走廊位置、
-降雨强度、危险级等。正式项目建议先做 DWG 解析，把建筑
-底图自动转成这份 JSON，而不是手写。
+降雨强度、危险级等。也可以用 `--plan` 直接解析建筑底图 DXF，
+再用 `--input` 覆盖层数、危险级、立管位置等设计参数。
 
 ## 天正 / AutoCAD 怎么用
 
